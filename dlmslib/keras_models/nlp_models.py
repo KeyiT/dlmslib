@@ -197,7 +197,7 @@ def build_cnn_model(
     return model
 
 
-def build_rnn_cnn_model(
+def build_birnn_cnn_model(
         voca_dim, time_steps, output_dim, rnn_dim, mlp_dim, num_filters, filter_sizes,
         item_embedding=None, rnn_depth=1, mlp_depth=1,
         drop_out=0.5, rnn_drop_out=0.5, rnn_state_drop_out=0.5, cnn_drop_out=0.5, pooling='max',
