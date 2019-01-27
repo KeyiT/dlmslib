@@ -126,7 +126,7 @@ def build_cnn_model(
         drop_out=0.5, cnn_drop_out=0.5, pooling='max',
         trainable_embedding=False):
     """
-    Create A Bidirectional Attention Model.
+    Create A CNN Model.
 
     :param voca_dim: vocabulary dimension size.
     :param time_steps: the length of input
@@ -203,7 +203,7 @@ def build_rnn_cnn_model(
         drop_out=0.5, rnn_drop_out=0.5, rnn_state_drop_out=0.5, cnn_drop_out=0.5, pooling='max',
         trainable_embedding=False, gpu=False):
     """
-    Create A Bidirectional Attention Model.
+    Create A Bidirectional CNN Model.
 
     :param voca_dim: vocabulary dimension size.
     :param time_steps: the length of input
