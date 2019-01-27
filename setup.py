@@ -7,7 +7,7 @@ if sys.version_info < (3,6):
     sys.exit('Sorry, Python < 3.6 is not supported')
 
 setup(
-    name="dlmsliblib",
+    name="dlmslib",
     version="0.1",
     author="keyi.tang",
     author_email="keyit92@gmail.com",
