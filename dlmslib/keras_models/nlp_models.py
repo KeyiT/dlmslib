@@ -29,7 +29,7 @@ def build_birnn_attention_model(
         voca_dim, time_steps, output_dim, rnn_dim, mlp_dim, 
         item_embedding=None, rnn_depth=1, mlp_depth=1, num_att_channel=1,
         drop_out=0.5, rnn_drop_out=0., rnn_state_drop_out=0.,
-        trainable_embedding=False, gpu=False):
+        trainable_embedding=False, gpu=False, return_customized_layers=False):
     """
     Create A Bidirectional Attention Model.
 
@@ -51,6 +51,8 @@ def build_birnn_attention_model(
     :param trainable_embedding: boolean
     :param gpu: boolean, default=False
         If True, CuDNNLSTM is used instead of LSTM for RNN layer.
+    :param return_customized_layers: boolean, default=False
+        If True, return model and customized object dictionary, otherwise return model only
     :return: keras model
     """
     
@@ -117,6 +119,9 @@ def build_birnn_attention_model(
     outputs = layers.Dense(output_dim, activation="softmax", name="softmax_layer0")(x)
 
     model = models.Model(inputs, outputs)
+
+    if return_customized_layers:
+        return model, {'AttentionWeight': clayers.AttentionWeight}
     return model
 
 
@@ -124,7 +129,7 @@ def build_cnn_model(
         voca_dim, time_steps, output_dim, mlp_dim, num_filters, filter_sizes,
         item_embedding=None, mlp_depth=1,
         drop_out=0.5, cnn_drop_out=0.5, pooling='max',
-        trainable_embedding=False):
+        trainable_embedding=False, return_customized_layers=False):
     """
     Create A CNN Model.
 
@@ -145,6 +150,8 @@ def build_cnn_model(
     :param pooling: str, either 'max' or 'average'
         Pooling method.
     :param trainable_embedding: boolean
+    :param return_customized_layers: boolean, default=False
+        If True, return model and customized object dictionary, otherwise return model only
     :return: keras model
     """
 
@@ -194,6 +201,10 @@ def build_cnn_model(
     outputs = layers.Dense(output_dim, activation="softmax", name="softmax_layer0")(x)
 
     model = models.Model(inputs, outputs)
+
+    if return_customized_layers:
+        return model, dict()
+
     return model
 
 
@@ -201,7 +212,7 @@ def build_birnn_cnn_model(
         voca_dim, time_steps, output_dim, rnn_dim, mlp_dim, num_filters, filter_sizes,
         item_embedding=None, rnn_depth=1, mlp_depth=1,
         drop_out=0.5, rnn_drop_out=0.5, rnn_state_drop_out=0.5, cnn_drop_out=0.5, pooling='max',
-        trainable_embedding=False, gpu=False):
+        trainable_embedding=False, gpu=False, return_customized_layers=False):
     """
     Create A Bidirectional CNN Model.
 
@@ -229,6 +240,8 @@ def build_birnn_cnn_model(
     :param trainable_embedding: boolean
     :param gpu: boolean, default=False
         If True, CuDNNLSTM is used instead of LSTM for RNN layer.
+    :param return_customized_layers: boolean, default=False
+        If True, return model and customized object dictionary, otherwise return model only
     :return: keras model
     """
 
@@ -294,4 +307,8 @@ def build_birnn_cnn_model(
     outputs = layers.Dense(output_dim, activation="softmax", name="softmax_layer0")(x)
 
     model = models.Model(inputs, outputs)
+
+    if return_customized_layers:
+        return model, dict()
+
     return model

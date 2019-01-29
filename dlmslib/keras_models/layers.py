@@ -94,6 +94,19 @@ class AttentionWeight(Layer):
     def compute_output_shape(self, input_shape):
         return input_shape[0], input_shape[1]
 
+    def get_config(self):
+        config = {
+            'W_regularizer': regularizers.serialize(self.W_regularizer),
+            'u_regularizer': regularizers.serialize(self.u_regularizer),
+            'b_regularizer': regularizers.serialize(self.b_regularizer),
+            'W_constraint': constraints.serialize(self.W_constraint),
+            'u_constraint': constraints.serialize(self.u_constraint),
+            'b_constraint': constraints.serialize(self.b_constraint),
+            'bias': self.bias
+        }
+        base_config = super(AttentionWeight, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
 
 def _dot_product(x, kernel):
     """
