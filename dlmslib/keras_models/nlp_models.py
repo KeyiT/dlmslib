@@ -87,7 +87,7 @@ def build_birnn_attention_model(
                 layers.CuDNNLSTM(rnn_dim, return_sequences=True),
                 name='bi_lstm_layer' + str(i))(x)
             x = layers.BatchNormalization(name='rnn_batch_norm_layer' + str(i))(x)
-            x = layers.Dropout(name="rnn_dropout_layer" + str(i))(x)
+            x = layers.Dropout(rnn_drop_out, name="rnn_dropout_layer" + str(i))(x)
     else:
         # rnn encoding
         for i in range(rnn_depth):
@@ -276,7 +276,7 @@ def build_birnn_cnn_model(
                 layers.CuDNNLSTM(rnn_dim, return_sequences=True),
                 name='bi_lstm_layer' + str(i))(x)
             x = layers.BatchNormalization(name='rnn_batch_norm_layer' + str(i))(x)
-            x = layers.Dropout(name="rnn_dropout_layer" + str(i))(x)
+            x = layers.Dropout(rnn_drop_out, name="rnn_dropout_layer" + str(i))(x)
     else:
         # rnn encoding
         for i in range(rnn_depth):
