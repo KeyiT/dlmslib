@@ -99,7 +99,7 @@ def build_birnn_attention_model(
     x_per = layers.Permute((2, 1), name='permuted_attention_x')(x)
     for h in range(max(1, num_att_channel)):
         attention = clayers.AttentionWeight(name="attention_weights_layer" + str(h))(x)
-        xx = layers.Dot(name='focus_head' + str(h) + '_layer0')([x_per, attention])
+        xx = layers.Dot([2, 1], name='focus_head' + str(h) + '_layer0')([x_per, attention])
         attention_heads.append(xx)
 
     if num_att_channel > 1:

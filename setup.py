@@ -3,12 +3,18 @@ from setuptools import setup, find_packages
 
 import sys
 
-if sys.version_info < (3,6):
+if sys.version_info < (3, 6):
     sys.exit('Sorry, Python < 3.6 is not supported')
+
+test_requirements = [
+    'numpy==1.14.5',
+    'tensorflow==1.12.0',
+    'keras==2.2.4'
+]
 
 setup(
     name="dlmslib",
-    version="0.1",
+    version="0.3",
     author="keyi.tang",
     author_email="keyit92@gmail.com",
     packages=find_packages(),
@@ -19,11 +25,11 @@ setup(
     include_package_data=True,
     package_data={},
     dependency_links=[],
+    test_suite="tests",
+    test_require=[],
     classifiers=[
         "Programming Language :: Python :: 3",
-         "License :: OSI Approved :: MIT License",
-         "Operating System :: OS Independent",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
     ]
 )
-
-
