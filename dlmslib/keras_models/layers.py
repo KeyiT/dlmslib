@@ -1,4 +1,4 @@
-from keras import initializers, regularizers, constraints, activations
+from keras import initializers, regularizers, constraints
 from keras.engine import Layer
 import keras.backend as K
 
@@ -39,7 +39,7 @@ class AttentionWeight(Layer):
         self.b_constraint = constraints.get(b_constraint)
 
         self.bias = bias
-        super(AttentionWeightWithContext, self).__init__(**kwargs)
+        super(AttentionWeight, self).__init__(**kwargs)
 
     def build(self, input_shape):
         assert len(input_shape) == 3
@@ -62,7 +62,7 @@ class AttentionWeight(Layer):
                                  regularizer=self.u_regularizer,
                                  constraint=self.u_constraint)
 
-        super(AttentionWeightWithContext, self).build(input_shape)
+        super(AttentionWeight, self).build(input_shape)
 
     def compute_mask(self, input, input_mask=None):
         # do not pass the mask to the next layers
@@ -93,3 +93,19 @@ class AttentionWeight(Layer):
 
     def compute_output_shape(self, input_shape):
         return input_shape[0], input_shape[1]
+
+
+def _dot_product(x, kernel):
+    """
+    Wrapper for dot product operation, in order to be compatible with both
+    Theano and Tensorflow
+    Args:
+        x (): input
+        kernel (): weights
+    Returns:
+    """
+    if K.backend() == 'tensorflow':
+        # todo: check that this is correct
+        return K.squeeze(K.dot(x, K.expand_dims(kernel)), axis=-1)
+    else:
+        return K.dot(x, kernel)
