@@ -58,7 +58,7 @@ class LabeledTextBinaryTreeNode(object):  # a node in the tree
             node.isLeaf = True
             return node
 
-        node.left = LabeledTextBinaryTreeNode.__parse_ptb_tokens(tokens[2: split], parent=node)
-        node.right = LabeledTextBinaryTreeNode.__parse_ptb_tokens(tokens[split: -1], parent=node)
+        node.left = LabeledTextBinaryTreeNode.__parse_ptb_tokens(tokens[2: split], open_char=open_char, close_char=close_char)
+        node.right = LabeledTextBinaryTreeNode.__parse_ptb_tokens(tokens[split: -1], open_char=open_char, close_char=close_char)
 
         return node
