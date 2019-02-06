@@ -2,7 +2,7 @@ import collections
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as tfunc
 from torch import autograd
 from torch import cuda as tcuda
 from torch import nn
@@ -68,7 +68,7 @@ class RNTN(nn.Module):
             #             Wx = self.W(concated)
             Wx = torch.matmul(concated, self.W)  # 1xD
 
-            current = F.tanh(xVx + Wx + self.b)  # 1xD
+            current = torch.tanh(xVx + Wx + self.b)  # 1xD
         recursive_tensor[node] = current
         return recursive_tensor
 
@@ -89,4 +89,4 @@ class RNTN(nn.Module):
 
         propagated = torch.cat(propagated)  # (num_of_node in batch, D)
 
-        return F.log_softmax(self.W_out(propagated), 1)
+        return tfunc.log_softmax(self.W_out(propagated), 1)
