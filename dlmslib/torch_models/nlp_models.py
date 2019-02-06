@@ -131,32 +131,6 @@ class SARNTN(nn.Module):
         nn.init.xavier_uniform(self.W)
         self.b.data.fill_(0)
 
-    def tree_propagation(self, node):
-
-        LongTensor = tcuda.LongTensor if self.use_gpu else torch.LongTensor
-
-        recursive_tensor = collections.OrderedDict()
-        if node.is_leaf():
-            tensor = autograd.Variable(LongTensor([self.word2index[node.text]]))
-            current = self.embed(tensor)  # 1xD
-        else:
-            recursive_tensor.update(self.tree_propagation(node.left))
-            recursive_tensor.update(self.tree_propagation(node.right))
-
-            concated = torch.cat([recursive_tensor[node.left], recursive_tensor[node.right]], 1)  # 1x2D
-            xVx = []
-            for i, v in enumerate(self.V):
-                #                 xVx.append(torch.matmul(v(concated),concated.transpose(0,1)))
-                xVx.append(torch.matmul(torch.matmul(concated, v), concated.transpose(0, 1)))
-
-            xVx = torch.cat(xVx, 1)  # 1xD
-            #             Wx = self.W(concated)
-            Wx = torch.matmul(concated, self.W)  # 1xD
-
-            current = torch.tanh(xVx + Wx + self.b)  # 1xD
-        recursive_tensor[node] = current
-        return recursive_tensor
-
     def forward(self, buffers, transitions, root_only=False):
 
         # The input comes in as a single tensor of word embeddings;
@@ -285,7 +259,7 @@ class Tracker(nn.Module):
         stack2 = _bundle(stack[-2] for stack in stacks)[0]
         x = torch.cat((buf, stack1, stack2), 1)
         if self.state is None:
-            self.state = 2 * [Variable(
+            self.state = 2 * [autograd.Variable(
                 x.data.new(x.size(0), self.state_size).zero_())]
         self.state = self.rnn(x, self.state)
         return _unbundle(self.state)
