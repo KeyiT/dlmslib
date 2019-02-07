@@ -93,32 +93,32 @@ class RNTN(nn.Module):
         return tfunc.log_softmax(self.W_out(propagated), 1)
 
 
-class SARNTN(nn.Module):
+class SRNTN(nn.Module):
 
-    def __init__(self, word2index, embed_matrix, output_size, trainable_embed=True, use_gpu=False):
-        super(SARNTN, self).__init__()
+    def __init__(self, embed_matrix, hidden_size, tracker_size, output_size, alph_droput=0.5, trainable_embed=True, use_gpu=False, train_phase=True):
+        super(SRNTN, self).__init__()
 
-        self.word2index = word2index
         self.trainable_embed = trainable_embed
         self.use_gpu = use_gpu
+        self.train_phase = train_phase
+        self.alph_dropout = alph_droput
 
         if isinstance(embed_matrix, np.ndarray):
-            voc_size, hidden_size = embed_matrix.shape
-            self.embed = nn.Embedding(voc_size, hidden_size)
+            voc_size, embed_size = embed_matrix.shape
+            self.embed = nn.Embedding(voc_size, embed_size)
             self.embed.load_state_dict({'weight': embed_matrix})
             self.embed.weight.requires_grad = trainable_embed
         elif isinstance(embed_matrix, (int, np.int8, np.int16, np.int32, np.int64, np.int128)):
-            hidden_size = embed_matrix
-            voc_size = len(word2index)
-            self.embed = nn.Embedding(voc_size, hidden_size)
+            embed_size = embed_matrix
+            voc_size = hidden_size
+            self.embed = nn.Embedding(voc_size, embed_size)
             self.embed.weight.requires_grad = trainable_embed
         else:
             raise ValueError("embed matrix must be either 2d numpy array or integer")
 
-        self.V = nn.ParameterList(
-            [nn.Parameter(torch.randn(hidden_size * 2, hidden_size * 2)) for _ in range(hidden_size)])  # Tensor
-        self.W = nn.Parameter(torch.randn(hidden_size * 2, hidden_size))
-        self.b = nn.Parameter(torch.randn(1, hidden_size))
+        self.W_in = nn.Linear(voc_size, hidden_size)
+        self.reduce = Reduce(hidden_size, tracker_size)
+        self.tracker = Tracker(hidden_size, tracker_size)
         self.W_out = nn.Linear(hidden_size, output_size)
 
     def init_weight(self):
@@ -126,12 +126,21 @@ class SARNTN(nn.Module):
             nn.init.xavier_uniform(self.embed.state_dict()['weight'])
 
         nn.init.xavier_uniform(self.W_out.state_dict()['weight'])
-        for param in self.V.parameters():
-            nn.init.xavier_uniform(param)
-        nn.init.xavier_uniform(self.W)
-        self.b.data.fill_(0)
+        nn.init.xavier_uniform(self.W_in.state_dict()['weight'])
 
-    def forward(self, buffers, transitions, root_only=False):
+    def forward(self, token_index_sequences, transitions):
+
+        buffers = self.embed(token_index_sequences)
+        buffers = tfunc.alpha_dropout(tfunc.selu(self.W_in(buffers)), self.alph_dropout, training=self.train_phase)
+
+        outputs0 = tfunc.log_softmax(self.W_out(buffers), 2).transpose(1, 0)
+
+        buffers = [
+            list(torch.split(b.squeeze(1), 1, 0))[::-1]
+            for b in torch.split(buffers, 1, 0)
+        ]
+
+        transitions.transpose_(1, 0)
 
         # The input comes in as a single tensor of word embeddings;
         # I need it to be a list of stacks, one for each example in
@@ -141,8 +150,6 @@ class SARNTN(nn.Module):
         # list; they have also been prefixed with a null value.
 
         # shape = (max_len, batch, embed_dims)
-        buffers = [list(torch.split(b.squeeze(1), 1, 0))
-                   for b in torch.split(buffers, 1, 1)]
         buffers = [list(map(lambda vec_: torch.cat([vec_, vec_], 0), buf)) for buf in buffers]
 
         stacks = [[buf[0], buf[0]] for buf in buffers]
@@ -153,7 +160,7 @@ class SARNTN(nn.Module):
         # shape = (max_len, batch)
         num_transitions = transitions.size(0)
 
-        outputs = list()
+        outputs1 = list()
         for i in range(num_transitions):
             trans = transitions[i]
             tracker_states = self.tracker(buffers, stacks)
@@ -161,6 +168,8 @@ class SARNTN(nn.Module):
             lefts, rights, trackings = [], [], []
             batch = zip(trans.data, buffers, stacks, tracker_states)
             indices = list()
+
+            tokens_ = list()
             for bi in range(len(batch)):
                 transition, buf, stack, tracking = batch[bi]
                 if transition == 3:  # shift
@@ -170,6 +179,7 @@ class SARNTN(nn.Module):
                     lefts.append(stack.pop())
                     trackings.append(tracking)
                     indices.append(bi)
+
             if rights:
                 hc_list, hc_tensor = self.reduce(lefts, rights, trackings)
                 reduced = iter(hc_list)
@@ -177,10 +187,10 @@ class SARNTN(nn.Module):
                     if transition == 2:
                         stack.append(next(reduced))
 
-                outputs.append(tfunc.log_softmax(self.W_out(hc_tensor[0]), 1))
+                outputs1.append(tfunc.log_softmax(self.W_out(hc_tensor[0]), 1))
 
         # shape = (max_len, [num_reduce], output_dim)
-        return outputs
+        return outputs0, outputs1
 
 
 class Reduce(nn.Module):
@@ -194,7 +204,7 @@ class Reduce(nn.Module):
             tracker is present.
     """
 
-    def __init__(self, size, tracker_size=None):
+    def __init__(self, size, tracker_size):
         super(Reduce, self).__init__()
         self.left = nn.Linear(size, 5 * size)
         self.right = nn.Linear(size, 5 * size, bias=False)
@@ -245,7 +255,7 @@ class Reduce(nn.Module):
 
 class Tracker(nn.Module):
 
-    def __init__(self, size, tracker_size,):
+    def __init__(self, size, tracker_size):
         super(Tracker, self).__init__()
         self.rnn = nn.LSTMCell(3 * size, tracker_size)
         self.state_size = tracker_size
