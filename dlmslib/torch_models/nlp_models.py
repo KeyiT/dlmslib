@@ -110,7 +110,7 @@ class ThinStackHybridLSTM(nn.Module):
         if isinstance(embed_matrix, np.ndarray):
             voc_size, embed_size = embed_matrix.shape
             self.embed = nn.Embedding(voc_size, embed_size)
-            self.embed.load_state_dict({'weight': embed_matrix})
+            self.embed.weight = nn.Parameter(torch.from_numpy(embed_matrix))
             self.embed.weight.requires_grad = trainable_embed
         elif isinstance(embed_matrix, (int, np.int8, np.int16, np.int32, np.int64, np.int128)):
             embed_size = embed_matrix

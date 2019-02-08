@@ -21,7 +21,7 @@ class LabeledTextBinaryTreeNode(object):  # a node in the tree
         if self.is_leaf():
             return [self.text]
         else:
-            return self.get_leaf_texts(self.left) + self.get_leaf_texts(self.right)
+            return self.left.get_leaf_texts() + self.right.get_leaf_texts()
 
     def get_transitions(self, shift_symbol='SHIFT', reduce_symbol='REDUCE'):
         # from left to right
