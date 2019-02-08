@@ -42,16 +42,16 @@ class LabeledTextBinaryTreeNode(object):  # a node in the tree
         if self.is_leaf():
             return [None]
         else:
-            return self.left.get_non_leaf_labels_post_order() + \
-                   self.right.get_non_leaf_labels_post_order() + [self.label]
+            return self.left.get_labels_in_transition_order() + \
+                   self.right.get_labels_in_transition_order() + [self.label]
 
     def get_leaf_labels(self):
         # from left to right
         if self.is_leaf():
             return [self.label]
         else:
-            return self.left.get_non_leaf_labels_post_order() + \
-                   self.right.get_non_leaf_labels_post_order()
+            return self.left.get_leaf_labels() + \
+                   self.right.get_leaf_labels()
 
     @classmethod
     def parse_ptb_string(cls, ptb_string, open_char='(', close_char=')'):

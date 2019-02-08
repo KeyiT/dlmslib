@@ -2,14 +2,13 @@ import collections
 import itertools
 
 import numpy as np
+import sklearn.metrics as sm
 import torch
 import torch.nn.functional as tfunc
 from torch import autograd
 from torch import cuda as tcuda
 from torch import nn
 from torch import optim
-
-import sklearn.metrics as sm
 
 
 class RNTN(nn.Module):
@@ -100,7 +99,8 @@ class ThinStackHybridLSTM(nn.Module):
     SHIFT_SYMBOL = 1
     REDUCE_SYMBOL = 2
 
-    def __init__(self, embed_matrix, hidden_size, tracker_size, output_size, pad_token_index, alph_droput=0.5, trainable_embed=True,
+    def __init__(self, embed_matrix, hidden_size, tracker_size, output_size, pad_token_index, alph_droput=0.5,
+                 trainable_embed=True,
                  use_gpu=False, train_phase=True):
         super(ThinStackHybridLSTM, self).__init__()
 
@@ -113,7 +113,7 @@ class ThinStackHybridLSTM(nn.Module):
         if isinstance(embed_matrix, np.ndarray):
             voc_size, embed_size = embed_matrix.shape
             self.embed = nn.Embedding(voc_size, embed_size)
-            self.embed.weight = nn.Parameter(torch.from_numpy(embed_matrix))
+            self.embed.weight = nn.Parameter(torch.from_numpy(embed_matrix).float())
             self.embed.weight.requires_grad = trainable_embed
         elif isinstance(embed_matrix, (int, np.int8, np.int16, np.int32, np.int64, np.int128)):
             embed_size = embed_matrix
@@ -123,7 +123,7 @@ class ThinStackHybridLSTM(nn.Module):
         else:
             raise ValueError("embed matrix must be either 2d numpy array or integer")
 
-        self.W_in = nn.Linear(voc_size, hidden_size)
+        self.W_in = nn.Linear(embed_size, hidden_size)
         self.reduce = Reduce(hidden_size, tracker_size)
         self.tracker = Tracker(hidden_size, tracker_size)
         self.W_out = nn.Linear(hidden_size, output_size)
@@ -142,8 +142,8 @@ class ThinStackHybridLSTM(nn.Module):
             non_leaf_labels_batch.append(non_leaf_labels)
             leaf_labels_batch.append(leaf_labels)
 
-        words_batch = np.asarray(words_batch)
-        transitions_batch = np.asarray(transitions_batch)
+        words_batch = np.array(words_batch)
+        transitions_batch = np.array(transitions_batch)
         return words_batch, transitions_batch, non_leaf_labels_batch, leaf_labels_batch
 
     @staticmethod
@@ -161,7 +161,7 @@ class ThinStackHybridLSTM(nn.Module):
         num_words = len(words)
         num_transitions = len(transitions)
 
-        if len(transitions) < max_len_tran:
+        if len(transitions) <= max_len_tran:
             # pad transitions with shift
             num_pad_shifts = max_len_tran - num_transitions
             transitions = [ThinStackHybridLSTM.SHIFT_SYMBOL, ] * num_pad_shifts + transitions
@@ -196,7 +196,7 @@ class ThinStackHybridLSTM(nn.Module):
             leaf_labels = leaf_labels + [None] * (max_len_tran - len(leaf_labels))
 
         # pre-pad every data with one empty tokens and shift
-        transitions = [ThinStackHybridLSTM.SHIFT_SYMBOL,] + transitions
+        transitions = [ThinStackHybridLSTM.SHIFT_SYMBOL, ] + transitions
         words = [pre_pad, ] + words
         leaf_labels = [None] + leaf_labels
         non_leaf_labels = [None] + non_leaf_labels
@@ -205,9 +205,10 @@ class ThinStackHybridLSTM(nn.Module):
 
     def train_model(self, train_tokens, train_transitions, train_labels, train_token_labels,
                     epochs=100, batch_size=30,
-                    validation_tokens=None, validation_transitions=None, validation_labels=None, validation_token_labels=None):
+                    validation_tokens=None, validation_transitions=None, validation_labels=None,
+                    validation_token_labels=None):
 
-        def get_batch(train_tokens_, train_transitions_, train_labels_,  train_token_labels_, batch_size_=batch_size):
+        def get_batch(train_tokens_, train_transitions_, train_labels_, train_token_labels_, batch_size_=batch_size):
             indices = np.arange(0, train_tokens.shape[0], step=1, dtype=np.int32).tolist()
             np.random.shuffle(indices)
 
@@ -237,8 +238,8 @@ class ThinStackHybridLSTM(nn.Module):
         for epoch in range(epochs):
             losses = []
 
-            for i, batch_tokens, batch_transitions, batch_labels, batch_token_labels in \
-                    enumerate(get_batch(train_tokens, train_transitions, train_labels, train_token_labels)):
+            for batch_tokens, batch_transitions, batch_labels, batch_token_labels in \
+                    get_batch(train_tokens, train_transitions, train_labels, train_token_labels):
 
                 preds, labels = self._predict_and_pack_tensor(
                     batch_tokens, batch_transitions, batch_labels, batch_token_labels
@@ -250,21 +251,19 @@ class ThinStackHybridLSTM(nn.Module):
                 loss.backward()
                 optimizer.step()
 
-                if i % 100 == 0:
-                    print('[%d/%d] mean_loss : %.2f' % (epoch, epochs, np.mean(losses)))
-                    losses = []
+                print('[%d/%d] mean_loss : %.2f' % (epoch, epochs, np.mean(losses)))
+                losses = []
 
-                    if validation_labels is not None and \
+                if validation_labels is not None and \
                         validation_token_labels is not None and \
                         validation_tokens is not None and \
                         validation_transitions is not None:
+                    preds, labels = self._predict_and_pack_tensor(
+                        batch_tokens, batch_transitions, batch_labels, batch_token_labels
+                    )
 
-                        preds, labels = self._predict_and_pack_tensor(
-                            batch_tokens, batch_transitions, batch_labels, batch_token_labels
-                        )
-
-                        preds, labels = preds.max(1)[1].data.tolist(), labels.data.tolist()
-                        print(sm.classification_report(labels, preds))
+                    preds, labels = preds.max(1)[1].data.tolist(), labels.data.tolist()
+                    print(sm.classification_report(labels, preds))
 
     def _predict_and_pack_tensor(self, batch_tokens, batch_transitions, batch_labels, batch_token_labels):
 
@@ -290,8 +289,13 @@ class ThinStackHybridLSTM(nn.Module):
             torch.split(batch_token_pred, 1, 1)
         ))
         # flatten
+        # TODO: test
+        # print((len(batch_token_pred_list), len(batch_token_pred_list[0])))
+        # print((len(batch_token_labels), len(batch_token_labels[0])))
+
         batch_token_pred_list = flatten(batch_token_pred_list)
         batch_token_labels = flatten(batch_token_labels)
+
         # filter out padding leaf nodes
         for ti in range(len(batch_token_pred_list)):
             if batch_token_labels[ti] is not None:
@@ -299,7 +303,7 @@ class ThinStackHybridLSTM(nn.Module):
                 label_list.append(batch_token_labels[ti])
 
         # -------- add prediction ---------
-        for li in range(len(batch_pred)):
+        for li in range(len(batch_labels[0])):
             for bi in range(len(batch_labels)):
                 if batch_labels[bi][li] is not None:
                     label_list.append(batch_labels[bi][li])
@@ -318,7 +322,6 @@ class ThinStackHybridLSTM(nn.Module):
 
         # [token_labels, non_leaf_labels]
         return preds, labels
-
 
     def init_weight(self):
         if self.trainable_embed:
@@ -349,7 +352,7 @@ class ThinStackHybridLSTM(nn.Module):
         # list; they have also been prefixed with a null value.
 
         # shape = (max_len, batch, embed_dims)
-        buffers = [list(map(lambda vec_: torch.cat([vec_, vec_], 0), buf)) for buf in buffers]
+        buffers = [list(map(lambda vec_: torch.cat([vec_, vec_], 1), buf)) for buf in buffers]
 
         pad_embed = buffers[0][0]
         stacks = [[pad_embed, pad_embed] for _ in buffers]
@@ -366,7 +369,7 @@ class ThinStackHybridLSTM(nn.Module):
             tracker_states = self.tracker(buffers, stacks)
 
             lefts, rights, trackings = [], [], []
-            batch = zip(trans.data, buffers, stacks, tracker_states)
+            batch = list(zip(trans.data, buffers, stacks, tracker_states))
 
             for bi in range(len(batch)):
                 transition, buf, stack, tracking = batch[bi]
