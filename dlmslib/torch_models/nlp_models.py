@@ -225,7 +225,7 @@ class ThinStackHybridLSTM(nn.Module):
 
             idx = 0
             while idx < train_tokens_.shape[0]:
-                end_idx = max(idx + batch_size_, train_tokens_.shape[0])
+                end_idx = min(idx + batch_size_, train_tokens_.shape[0])
                 batch_tokens_ = train_tokens_[idx: end_idx]
                 batch_trans_ = train_transitions_[idx: end_idx]
                 batch_labels_ = train_labels_[idx: end_idx]
@@ -238,9 +238,9 @@ class ThinStackHybridLSTM(nn.Module):
         for epoch in range(epochs):
             losses = []
 
+            batch_index = 0
             for batch_tokens, batch_transitions, batch_labels, batch_token_labels in \
                     get_batch(train_tokens, train_transitions, train_labels, train_token_labels):
-
                 preds, labels = self._predict_and_pack_tensor(
                     batch_tokens, batch_transitions, batch_labels, batch_token_labels
                 )
@@ -251,19 +251,26 @@ class ThinStackHybridLSTM(nn.Module):
                 loss.backward()
                 optimizer.step()
 
-                print('[%d/%d] mean_loss : %.2f' % (epoch, epochs, np.mean(losses)))
-                losses = []
-
-                if validation_labels is not None and \
-                        validation_token_labels is not None and \
-                        validation_tokens is not None and \
-                        validation_transitions is not None:
-                    preds, labels = self._predict_and_pack_tensor(
-                        batch_tokens, batch_transitions, batch_labels, batch_token_labels
-                    )
-
+                if batch_index % 100 == 0:
                     preds, labels = preds.max(1)[1].data.tolist(), labels.data.tolist()
-                    print(sm.classification_report(labels, preds))
+                    prec_score = sm.precision_score(labels, preds, average='weighted')
+                    reca_score = sm.recall_score(labels, preds, average='weighted')
+
+                    print('[%d/%d] mean_loss: %.4f; weighted_precision: %.4f; weighted_recall: %.4f' % (epoch, epochs, np.mean(losses), prec_score, reca_score))
+                    losses = []
+
+                batch_index += 1
+
+            if validation_labels is not None and \
+                    validation_token_labels is not None and \
+                    validation_tokens is not None and \
+                    validation_transitions is not None:
+                preds, labels = self._predict_and_pack_tensor(
+                    batch_tokens, batch_transitions, batch_labels, batch_token_labels
+                )
+
+                preds, labels = preds.max(1)[1].data.tolist(), labels.data.tolist()
+                print(sm.classification_report(labels, preds))
 
     def _predict_and_pack_tensor(self, batch_tokens, batch_transitions, batch_labels, batch_token_labels):
 

@@ -95,6 +95,6 @@ class NLPModelTests(unittest.TestCase):
         model = nlp_models.ThinStackHybridLSTM(wv, hidden_size, tracker_size, output_size, pad_token_index,
                                                trainable_embed=True)
         model.train_model(train_data[0], train_data[1], train_data[2], train_data[3],
-                          epochs=30, batch_size=30,
+                          epochs=1, batch_size=6,
                           validation_tokens=dev_data[0], validation_transitions=dev_data[1],
                           validation_labels=dev_data[2], validation_token_labels=dev_data[3])
