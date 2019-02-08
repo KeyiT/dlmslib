@@ -93,15 +93,19 @@ class RNTN(nn.Module):
         return tfunc.log_softmax(self.W_out(propagated), 1)
 
 
-class SRNTN(nn.Module):
+class ThinStackHybridLSTM(nn.Module):
+    SHIFT_SYMBOL = 1
+    REDUCE_SYMBOL = 2
 
-    def __init__(self, embed_matrix, hidden_size, tracker_size, output_size, alph_droput=0.5, trainable_embed=True, use_gpu=False, train_phase=True):
-        super(SRNTN, self).__init__()
+    def __init__(self, embed_matrix, hidden_size, tracker_size, output_size, pad_token_index, alph_droput=0.5, trainable_embed=True,
+                 use_gpu=False, train_phase=True):
+        super(ThinStackHybridLSTM, self).__init__()
 
         self.trainable_embed = trainable_embed
         self.use_gpu = use_gpu
         self.train_phase = train_phase
         self.alph_dropout = alph_droput
+        self.pad_index = pad_token_index
 
         if isinstance(embed_matrix, np.ndarray):
             voc_size, embed_size = embed_matrix.shape
@@ -120,6 +124,54 @@ class SRNTN(nn.Module):
         self.reduce = Reduce(hidden_size, tracker_size)
         self.tracker = Tracker(hidden_size, tracker_size)
         self.W_out = nn.Linear(hidden_size, output_size)
+
+    def prepare_data(self, trees, word2index, max_len):
+        max_len_tran = 2 * max_len - 1
+
+        words_batch, transitions_batch = list(), list()
+        for tree in trees:
+            words, transitions = self.__from_tree(tree, word2index, max_len_tran, self.pad_index, self.pad_index)
+            words_batch.append(words)
+            transitions_batch.append(transitions_batch)
+
+        words_batch = autograd.Variable(torch.from_numpy(np.asarray(words_batch)))
+        transitions_batch = autograd.Variable(torch.from_numpy(np.asarray(transitions_batch)))
+        return words_batch, transitions_batch
+
+    @staticmethod
+    def __from_tree(tree, word2index, max_len_tran, pre_pad_index, post_pad_index):
+        words = tree.get_leaf_texts()
+        words = list(map(lambda word: word2index[word], words))
+        transitions = tree.get_transitions(
+            shift_symbol=ThinStackHybridLSTM.SHIFT_SYMBOL, reduce_symbol=ThinStackHybridLSTM.REDUCE_SYMBOL)
+
+        num_words = len(words)
+        num_transitions = len(transitions)
+
+        if len(transitions) < max_len_tran:
+            # pad transitions with shift
+            num_pad_shifts = max_len_tran - num_transitions
+            transitions = [ThinStackHybridLSTM.SHIFT_SYMBOL, ] * num_pad_shifts + transitions
+            words = [pre_pad_index] * num_pad_shifts + \
+                    words + \
+                    [post_pad_index] * (max_len_tran - num_pad_shifts - num_words)
+
+        elif len(transitions) > max_len_tran:
+            num_shift_before_crop = num_words
+
+            transitions = transitions[len(transitions) - max_len_tran:]
+            trans = np.asarray(transitions)
+            num_shift_after_crop = np.sum(trans[trans == ThinStackHybridLSTM.SHIFT_SYMBOL])
+
+            words = words[num_shift_before_crop - num_shift_after_crop:]
+            words = words + [post_pad_index, ] * (max_len_tran - len(words))
+
+        # pre-pad every data with one empty tokens and shift
+        transitions = [ThinStackHybridLSTM.SHIFT_SYMBOL,] + transitions
+        words = [pre_pad_index,] + words
+
+        return words, transitions
+
 
     def init_weight(self):
         if self.trainable_embed:
@@ -152,7 +204,8 @@ class SRNTN(nn.Module):
         # shape = (max_len, batch, embed_dims)
         buffers = [list(map(lambda vec_: torch.cat([vec_, vec_], 0), buf)) for buf in buffers]
 
-        stacks = [[buf[0], buf[0]] for buf in buffers]
+        pad_embed = buffers[0][0]
+        stacks = [[pad_embed, pad_embed] for _ in buffers]
 
         self.tracker.reset_state()
 
@@ -167,18 +220,19 @@ class SRNTN(nn.Module):
 
             lefts, rights, trackings = [], [], []
             batch = zip(trans.data, buffers, stacks, tracker_states)
-            indices = list()
 
-            tokens_ = list()
             for bi in range(len(batch)):
                 transition, buf, stack, tracking = batch[bi]
-                if transition == 3:  # shift
+                if transition == self.SHIFT_SYMBOL:  # shift
                     stack.append(buf.pop())
-                elif transition == 2:  # reduce
+                elif transition == self.REDUCE_SYMBOL:  # reduce
                     rights.append(stack.pop())
                     lefts.append(stack.pop())
                     trackings.append(tracking)
-                    indices.append(bi)
+
+                # make sure tree are good
+                while len(stack) < 2:
+                    stack.append(pad_embed)
 
             if rights:
                 hc_list, hc_tensor = self.reduce(lefts, rights, trackings)
@@ -189,7 +243,8 @@ class SRNTN(nn.Module):
 
                 outputs1.append(tfunc.log_softmax(self.W_out(hc_tensor[0]), 1))
 
-        # shape = (max_len, [num_reduce], output_dim)
+        # shape2 = (max_len, batch_size, output_dim)
+        # shape1 = (max_len, [num_reduce], output_dim)
         return outputs0, outputs1
 
 

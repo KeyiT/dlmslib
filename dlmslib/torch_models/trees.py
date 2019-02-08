@@ -23,6 +23,13 @@ class LabeledTextBinaryTreeNode(object):  # a node in the tree
         else:
             return self.get_leaf_texts(self.left) + self.get_leaf_texts(self.right)
 
+    def get_transitions(self, shift_symbol='SHIFT', reduce_symbol='REDUCE'):
+        # from left to right
+        if self.is_leaf():
+            return [shift_symbol, ]
+        else:
+            return self.get_transitions(self.left) + self.get_transitions(self.right) + [reduce_symbol, ]
+
     @classmethod
     def parse_ptb_string(cls, ptb_string, open_char='(', close_char=')'):
         tokens = []
