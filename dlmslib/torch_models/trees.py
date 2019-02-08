@@ -31,6 +31,28 @@ class LabeledTextBinaryTreeNode(object):  # a node in the tree
             return self.left.get_transitions(shift_symbol=shift_symbol, reduce_symbol=reduce_symbol) + \
                    self.right.get_transitions(shift_symbol=shift_symbol, reduce_symbol=reduce_symbol) + [reduce_symbol, ]
 
+    def get_non_leaf_labels_post_order(self):
+        if self.is_leaf():
+            return list()
+        else:
+            return self.left.get_non_leaf_labels_post_order() + \
+                   self.right.get_non_leaf_labels_post_order() + [self.label]
+
+    def get_labels_in_transition_order(self):
+        if self.is_leaf():
+            return [None]
+        else:
+            return self.left.get_non_leaf_labels_post_order() + \
+                   self.right.get_non_leaf_labels_post_order() + [self.label]
+
+    def get_leaf_labels(self):
+        # from left to right
+        if self.is_leaf():
+            return [self.label]
+        else:
+            return self.left.get_non_leaf_labels_post_order() + \
+                   self.right.get_non_leaf_labels_post_order()
+
     @classmethod
     def parse_ptb_string(cls, ptb_string, open_char='(', close_char=')'):
         tokens = []

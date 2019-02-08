@@ -9,6 +9,8 @@ from torch import cuda as tcuda
 from torch import nn
 from torch import optim
 
+import sklearn.metrics as sm
+
 
 class RNTN(nn.Module):
 
@@ -131,15 +133,18 @@ class ThinStackHybridLSTM(nn.Module):
         max_len_tran = 2 * max_len - 1
 
         words_batch, transitions_batch = list(), list()
+        non_leaf_labels_batch, leaf_labels_batch = list(), list()
         for tree in trees:
-            words, transitions = cls.__from_tree(
+            words, transitions, non_leaf_labels, leaf_labels = cls.__from_tree(
                 tree, word2index, max_len_tran, pre_pad=pre_pad_index, post_pad=post_pad_index)
             words_batch.append(words)
             transitions_batch.append(transitions)
+            non_leaf_labels_batch.append(non_leaf_labels)
+            leaf_labels_batch.append(leaf_labels)
 
         words_batch = np.asarray(words_batch)
         transitions_batch = np.asarray(transitions_batch)
-        return words_batch, transitions_batch
+        return words_batch, transitions_batch, non_leaf_labels_batch, leaf_labels_batch
 
     @staticmethod
     def __from_tree(tree, word2index, max_len_tran, pre_pad, post_pad):
@@ -150,6 +155,8 @@ class ThinStackHybridLSTM(nn.Module):
 
         transitions = tree.get_transitions(
             shift_symbol=ThinStackHybridLSTM.SHIFT_SYMBOL, reduce_symbol=ThinStackHybridLSTM.REDUCE_SYMBOL)
+        non_leaf_labels = tree.get_labels_in_transition_order()
+        leaf_labels = tree.get_leaf_labels()
 
         num_words = len(words)
         num_transitions = len(transitions)
@@ -161,74 +168,157 @@ class ThinStackHybridLSTM(nn.Module):
             words = [pre_pad] * num_pad_shifts + \
                     words + \
                     [post_pad] * (max_len_tran - num_pad_shifts - num_words)
+            # leaf_labels should has the same length as words
+            # pad with None
+            leaf_labels = [None] * num_pad_shifts + \
+                          leaf_labels + \
+                          [None] * (max_len_tran - num_pad_shifts - num_words)
+
+            # non_leaf_labels must follow the same operations as transitions
+            non_leaf_labels = [None, ] * num_pad_shifts + non_leaf_labels
 
         elif len(transitions) > max_len_tran:
             num_shift_before_crop = num_words
 
             transitions = transitions[len(transitions) - max_len_tran:]
+            # non_leaf_labels must follow the same operations as transitions
+            non_leaf_labels = non_leaf_labels[len(non_leaf_labels) - max_len_tran:]
+
             trans = np.asarray(transitions)
             num_shift_after_crop = np.sum(trans[trans == ThinStackHybridLSTM.SHIFT_SYMBOL])
 
             words = words[num_shift_before_crop - num_shift_after_crop:]
             words = words + [post_pad, ] * (max_len_tran - len(words))
 
+            # leaf_labels should has the same length as words
+            # pad with None
+            leaf_labels = leaf_labels[num_shift_before_crop - num_shift_after_crop:]
+            leaf_labels = leaf_labels + [None] * (max_len_tran - len(leaf_labels))
+
         # pre-pad every data with one empty tokens and shift
         transitions = [ThinStackHybridLSTM.SHIFT_SYMBOL,] + transitions
         words = [pre_pad, ] + words
+        leaf_labels = [None] + leaf_labels
+        non_leaf_labels = [None] + non_leaf_labels
 
-        return words, transitions
+        return words, transitions, non_leaf_labels, leaf_labels
 
-    def train_model(self, train_token, tran_transition, epochs=10, batch_size=30):
+    def train_model(self, train_tokens, train_transitions, train_labels, train_token_labels,
+                    epochs=100, batch_size=30,
+                    validation_tokens=None, validation_transitions=None, validation_labels=None, validation_token_labels=None):
 
-        def getBatch(batch_size, train_token_, train_transitions_):
-            random.shuffle(train_data)
-            sindex = 0
-            eindex = batch_size
-            while eindex < train_token_.shape[0]:
-                batch = train_token_[sindex: eindex]
-                temp = eindex
-                eindex = eindex + batch_size
-                sindex = temp
-                yield autograd.Variable(torch.from_numpy(batch))
+        def get_batch(train_tokens_, train_transitions_, train_labels_,  train_token_labels_, batch_size_=batch_size):
+            indices = np.arange(0, train_tokens.shape[0], step=1, dtype=np.int32).tolist()
+            np.random.shuffle(indices)
 
-            if eindex >= train_token_.shape[0]:
-                batch = train_data[sindex:]
-                yield autograd.Variable(torch.from_numpy(batch))
+            train_tokens_ = train_tokens_[indices]
+            train_transitions_ = train_transitions_[indices]
+            train_labels_ = list(map(
+                lambda i_: train_labels_[i_],
+                indices
+            ))
+            train_token_labels_ = list(map(
+                lambda i_: train_token_labels_[i_],
+                indices
+            ))
 
-        lr = 0.01
-        reschedual = False
+            idx = 0
+            while idx < train_tokens_.shape[0]:
+                end_idx = max(idx + batch_size_, train_tokens_.shape[0])
+                batch_tokens_ = train_tokens_[idx: end_idx]
+                batch_trans_ = train_transitions_[idx: end_idx]
+                batch_labels_ = train_labels_[idx: end_idx]
+                batch_token_labels_ = train_token_labels_[idx: end_idx]
+                idx = end_idx
+                yield batch_tokens_, batch_trans_, batch_labels_, batch_token_labels_
+
+        loss_func = nn.CrossEntropyLoss()
+        optimizer = optim.RMSprop(self.parameters())
         for epoch in range(epochs):
             losses = []
 
-            # learning rate annealing
-            if (not reschedual) and epoch == epochs // 2:
-                lr *= 0.1
-                optimizer = optim.Adam(self.parameters(), lr=lr)  # L2 norm
-                reschedual = True
+            for i, batch_tokens, batch_transitions, batch_labels, batch_token_labels in \
+                    enumerate(get_batch(train_tokens, train_transitions, train_labels, train_token_labels)):
 
-            for i, batch in enumerate(getBatch(batch_size, train_token)):
+                preds, labels = self._predict_and_pack_tensor(
+                    batch_tokens, batch_transitions, batch_labels, batch_token_labels
+                )
 
-
-
-                if ROOT_ONLY:
-                    labels = [tree.labels[-1] for tree in batch]
-                    labels = Variable(LongTensor(labels))
-                else:
-                    labels = [tree.labels for tree in batch]
-                    labels = Variable(LongTensor(flatten(labels)))
-
-                model.zero_grad()
-                preds = model(batch, ROOT_ONLY)
-
-                loss = loss_function(preds, labels)
+                loss = loss_func(preds, labels)
                 losses.append(loss.data.tolist())
 
                 loss.backward()
                 optimizer.step()
 
                 if i % 100 == 0:
-                    print('[%d/%d] mean_loss : %.2f' % (epoch, EPOCH, np.mean(losses)))
+                    print('[%d/%d] mean_loss : %.2f' % (epoch, epochs, np.mean(losses)))
                     losses = []
+
+                    if validation_labels is not None and \
+                        validation_token_labels is not None and \
+                        validation_tokens is not None and \
+                        validation_transitions is not None:
+
+                        preds, labels = self._predict_and_pack_tensor(
+                            batch_tokens, batch_transitions, batch_labels, batch_token_labels
+                        )
+
+                        preds, labels = preds.max(1)[1].data.tolist(), labels.data.tolist()
+                        print(sm.classification_report(labels, preds))
+
+    def _predict_and_pack_tensor(self, batch_tokens, batch_transitions, batch_labels, batch_token_labels):
+
+        batch_tokens = torch.from_numpy(batch_tokens)
+        batch_transitions = torch.from_numpy(batch_transitions)
+
+        LongTensor = tcuda.LongTensor if self.use_gpu else torch.LongTensor
+        model = self.cuda() if self.use_gpu else self
+        flatten = lambda l: [item for sublist in l for item in sublist]
+
+        model.zero_grad()
+        batch_token_pred, batch_pred = model(batch_tokens, batch_transitions)
+
+        preds_list = list()
+        label_list = list()
+        # -------- add token prediction ---------
+        # [batch_size, max_len, [1, vec_dim]]
+        batch_token_pred_list = list(map(
+            lambda token_pred: list(map(
+                lambda vec: vec,
+                torch.split(token_pred.squeeze(1), 1, 0)
+            )),
+            torch.split(batch_token_pred, 1, 1)
+        ))
+        # flatten
+        batch_token_pred_list = flatten(batch_token_pred_list)
+        batch_token_labels = flatten(batch_token_labels)
+        # filter out padding leaf nodes
+        for ti in range(len(batch_token_pred_list)):
+            if batch_token_labels[ti] is not None:
+                preds_list.append(batch_token_pred_list[ti])
+                label_list.append(batch_token_labels[ti])
+
+        # -------- add prediction ---------
+        for li in range(len(batch_pred)):
+            for bi in range(len(batch_labels)):
+                if batch_labels[bi][li] is not None:
+                    label_list.append(batch_labels[bi][li])
+
+        # [max_len, [num_reduces], [1, vec_dim]]
+        batch_pred = list(map(
+            lambda preds: torch.split(preds, 1, 0),
+            batch_pred
+        ))
+        batch_pred = flatten(batch_pred)
+        preds_list.extend(batch_pred)
+
+        # make them tensors
+        preds = torch.cat(preds_list, 0)
+        labels = autograd.Variable(LongTensor(np.asarray(label_list, dtype=np.int32)))
+
+        # [token_labels, non_leaf_labels]
+        return preds, labels
+
 
     def init_weight(self):
         if self.trainable_embed:
@@ -245,7 +335,7 @@ class ThinStackHybridLSTM(nn.Module):
         outputs0 = tfunc.log_softmax(self.W_out(buffers), 2).transpose(1, 0)
 
         buffers = [
-            list(torch.split(b.squeeze(1), 1, 0))[::-1]
+            list(torch.split(b.squeeze(0), 1, 0))[::-1]
             for b in torch.split(buffers, 1, 0)
         ]
 
