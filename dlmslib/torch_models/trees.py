@@ -28,7 +28,8 @@ class LabeledTextBinaryTreeNode(object):  # a node in the tree
         if self.is_leaf():
             return [shift_symbol, ]
         else:
-            return self.get_transitions(self.left) + self.get_transitions(self.right) + [reduce_symbol, ]
+            return self.left.get_transitions(shift_symbol=shift_symbol, reduce_symbol=reduce_symbol) + \
+                   self.right.get_transitions(shift_symbol=shift_symbol, reduce_symbol=reduce_symbol) + [reduce_symbol, ]
 
     @classmethod
     def parse_ptb_string(cls, ptb_string, open_char='(', close_char=')'):
@@ -69,3 +70,9 @@ class LabeledTextBinaryTreeNode(object):  # a node in the tree
         node.right = LabeledTextBinaryTreeNode.__parse_ptb_tokens(tokens[split: -1], open_char=open_char, close_char=close_char)
 
         return node
+
+
+def read_parse_ptb_tree_bank_file(file_path):
+    with open(file_path, 'r', encoding='utf-8') as fid:
+        tree_list = [LabeledTextBinaryTreeNode.parse_ptb_string(l) for l in fid.readlines()]
+    return tree_list

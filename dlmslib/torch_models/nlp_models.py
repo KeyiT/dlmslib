@@ -7,6 +7,7 @@ import torch.nn.functional as tfunc
 from torch import autograd
 from torch import cuda as tcuda
 from torch import nn
+from torch import optim
 
 
 class RNTN(nn.Module):
@@ -125,23 +126,28 @@ class ThinStackHybridLSTM(nn.Module):
         self.tracker = Tracker(hidden_size, tracker_size)
         self.W_out = nn.Linear(hidden_size, output_size)
 
-    def prepare_data(self, trees, word2index, max_len):
+    @classmethod
+    def prepare_data(cls, trees, word2index, max_len, pre_pad_index, post_pad_index):
         max_len_tran = 2 * max_len - 1
 
         words_batch, transitions_batch = list(), list()
         for tree in trees:
-            words, transitions = self.__from_tree(tree, word2index, max_len_tran, self.pad_index, self.pad_index)
+            words, transitions = cls.__from_tree(
+                tree, word2index, max_len_tran, pre_pad=pre_pad_index, post_pad=post_pad_index)
             words_batch.append(words)
-            transitions_batch.append(transitions_batch)
+            transitions_batch.append(transitions)
 
-        words_batch = autograd.Variable(torch.from_numpy(np.asarray(words_batch)))
-        transitions_batch = autograd.Variable(torch.from_numpy(np.asarray(transitions_batch)))
+        words_batch = np.asarray(words_batch)
+        transitions_batch = np.asarray(transitions_batch)
         return words_batch, transitions_batch
 
     @staticmethod
-    def __from_tree(tree, word2index, max_len_tran, pre_pad_index, post_pad_index):
+    def __from_tree(tree, word2index, max_len_tran, pre_pad, post_pad):
         words = tree.get_leaf_texts()
-        words = list(map(lambda word: word2index[word], words))
+
+        if word2index is not None:
+            words = list(map(lambda word: word2index[word], words))
+
         transitions = tree.get_transitions(
             shift_symbol=ThinStackHybridLSTM.SHIFT_SYMBOL, reduce_symbol=ThinStackHybridLSTM.REDUCE_SYMBOL)
 
@@ -152,9 +158,9 @@ class ThinStackHybridLSTM(nn.Module):
             # pad transitions with shift
             num_pad_shifts = max_len_tran - num_transitions
             transitions = [ThinStackHybridLSTM.SHIFT_SYMBOL, ] * num_pad_shifts + transitions
-            words = [pre_pad_index] * num_pad_shifts + \
+            words = [pre_pad] * num_pad_shifts + \
                     words + \
-                    [post_pad_index] * (max_len_tran - num_pad_shifts - num_words)
+                    [post_pad] * (max_len_tran - num_pad_shifts - num_words)
 
         elif len(transitions) > max_len_tran:
             num_shift_before_crop = num_words
@@ -164,14 +170,65 @@ class ThinStackHybridLSTM(nn.Module):
             num_shift_after_crop = np.sum(trans[trans == ThinStackHybridLSTM.SHIFT_SYMBOL])
 
             words = words[num_shift_before_crop - num_shift_after_crop:]
-            words = words + [post_pad_index, ] * (max_len_tran - len(words))
+            words = words + [post_pad, ] * (max_len_tran - len(words))
 
         # pre-pad every data with one empty tokens and shift
         transitions = [ThinStackHybridLSTM.SHIFT_SYMBOL,] + transitions
-        words = [pre_pad_index,] + words
+        words = [pre_pad, ] + words
 
         return words, transitions
 
+    def train_model(self, train_token, tran_transition, epochs=10, batch_size=30):
+
+        def getBatch(batch_size, train_token_, train_transitions_):
+            random.shuffle(train_data)
+            sindex = 0
+            eindex = batch_size
+            while eindex < train_token_.shape[0]:
+                batch = train_token_[sindex: eindex]
+                temp = eindex
+                eindex = eindex + batch_size
+                sindex = temp
+                yield autograd.Variable(torch.from_numpy(batch))
+
+            if eindex >= train_token_.shape[0]:
+                batch = train_data[sindex:]
+                yield autograd.Variable(torch.from_numpy(batch))
+
+        lr = 0.01
+        reschedual = False
+        for epoch in range(epochs):
+            losses = []
+
+            # learning rate annealing
+            if (not reschedual) and epoch == epochs // 2:
+                lr *= 0.1
+                optimizer = optim.Adam(self.parameters(), lr=lr)  # L2 norm
+                reschedual = True
+
+            for i, batch in enumerate(getBatch(batch_size, train_token)):
+
+
+
+                if ROOT_ONLY:
+                    labels = [tree.labels[-1] for tree in batch]
+                    labels = Variable(LongTensor(labels))
+                else:
+                    labels = [tree.labels for tree in batch]
+                    labels = Variable(LongTensor(flatten(labels)))
+
+                model.zero_grad()
+                preds = model(batch, ROOT_ONLY)
+
+                loss = loss_function(preds, labels)
+                losses.append(loss.data.tolist())
+
+                loss.backward()
+                optimizer.step()
+
+                if i % 100 == 0:
+                    print('[%d/%d] mean_loss : %.2f' % (epoch, EPOCH, np.mean(losses)))
+                    losses = []
 
     def init_weight(self):
         if self.trainable_embed:

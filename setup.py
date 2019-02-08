@@ -9,12 +9,13 @@ if sys.version_info < (3, 6):
 test_requirements = [
     'numpy==1.14.5',
     'tensorflow==1.12.0',
-    'keras==2.2.4'
+    'keras==2.2.4',
+    'torch=1.0.0'
 ]
 
 setup(
     name="dlmslib",
-    version="0.43",
+    version="0.44",
     author="keyi.tang",
     author_email="keyit92@gmail.com",
     packages=find_packages(),
