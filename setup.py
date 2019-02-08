@@ -15,7 +15,7 @@ test_requirements = [
 
 setup(
     name="dlmslib",
-    version="0.44",
+    version="0.45",
     author="keyi.tang",
     author_email="keyit92@gmail.com",
     packages=find_packages(),
