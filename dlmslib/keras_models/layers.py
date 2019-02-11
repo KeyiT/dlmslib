@@ -1,6 +1,7 @@
-from keras import initializers, regularizers, constraints
+from keras import initializers, regularizers, constraints, activations
 from keras.engine import Layer
 import keras.backend as K
+from keras.layers import merge
 
 class AttentionWeight(Layer):
     """
@@ -105,6 +106,154 @@ class AttentionWeight(Layer):
             'bias': self.bias
         }
         base_config = super(AttentionWeight, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+
+class CoAttentionWeight(merge._Merge):
+    """
+        This code is a modified version of cbaziotis implementation:  GithubGist cbaziotis/AttentionWithContext.py
+        Attention operation, with a context/query vector, for temporal data.
+        Supports Masking.
+        Follows the work of Yang et al. [https://www.cs.cmu.edu/~diyiy/docs/naacl16.pdf]
+        "Hierarchical Attention Networks for Document Classification"
+        by using a context vector to assist the attention
+        # Input shape
+            3D tensor with shape: `(samples, steps, features)`.
+        # Output shape
+            2D tensor with shape: `(samples, steps)`.
+        :param kwargs:
+        Just put it on top of an RNN Layer (GRU/LSTM/SimpleRNN) with return_sequences=True.
+        The dimensions are inferred based on the output shape of the RNN.
+        Example:
+            model.add(LSTM(64, return_sequences=True))
+            model.add(AttentionWeight())
+        """
+
+    def __init__(self, model_size, activation='relu',
+                 W1_regularizer=None,  W2_regularizer=None, W_regularizer=None, b1_regularizer=None, b2_regularizer=None,
+                 W1_constraint=None, W2_constraint=None, W_constraint=None, b1_constraint=None, b2_constraint=None,
+                 bias1=True, bias2=True, **kwargs):
+
+        self.model_size = model_size
+        self.init = initializers.get('glorot_uniform')
+
+        self.W1_regularizer = regularizers.get(W1_regularizer)
+        self.W2_regularizer = regularizers.get(W2_regularizer)
+        self.b1_regularizer = regularizers.get(b1_regularizer)
+        self.b2_regularizer = regularizers.get(b2_regularizer)
+        self.W_regularizer = regularizers.get(W_regularizer)
+
+        self.W1_constraint = constraints.get(W1_constraint)
+        self.W2_constraint = constraints.get(W2_constraint)
+        self.b1_constraint = constraints.get(b1_constraint)
+        self.b2_constraint = constraints.get(b2_constraint)
+        self.W_constraint = constraints.get(W_constraint)
+
+        self.bias1 = bias1
+        self.bias2 = bias2
+        self.activation = activations.get(activation)
+        super(CoAttentionWeight, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+
+        super(CoAttentionWeight, self).build(input_shape)
+        if len(input_shape) != 2:
+            raise ValueError("input must be a size two list which contains two tensors")
+
+        shape1 = list(input_shape[0])
+        shape2 = list(input_shape[1])
+
+        self.W1 = self.add_weight((shape1, self.model_size),
+                                 initializer=self.init,
+                                 name='{}_W1'.format(self.name),
+                                 regularizer=self.W1_regularizer,
+                                 constraint=self.W1_constraint)
+
+        self.W2 = self.add_weight((self.model_size, shape2),
+                                 initializer=self.init,
+                                 name='{}_W2'.format(self.name),
+                                 regularizer=self.W2_regularizer,
+                                 constraint=self.W2_constraint)
+
+        self.W = self.add_weight((self.model_size, self.model_size),
+                                 initializer=self.init,
+                                 name='{}_W'.format(self.name),
+                                 regularizer=self.W_regularizer,
+                                 constraint=self.W_constraint)
+
+        if self.bias1:
+            self.b1 = self.add_weight((input_shape[-1],),
+                                     initializer='zero',
+                                     name='{}_b1'.format(self.name),
+                                     regularizer=self.b1_regularizer,
+                                     constraint=self.b1_constraint)
+
+        if self.bias2:
+            self.b2 = self.add_weight((input_shape[-1],),
+                                     initializer='zero',
+                                     name='{}_b2'.format(self.name),
+                                     regularizer=self.b2_regularizer,
+                                     constraint=self.b2_constraint)
+
+    def compute_mask(self, input, input_mask=None):
+        # do not pass the mask to the next layers
+        return None
+
+    def _merge_function(self, inputs):
+        if len(inputs) != 2:
+            raise ValueError('A `Subtract` layer should be called '
+                             'on exactly 2 inputs')
+
+        x1, x2 = inputs[0], inputs[1]
+
+        # u = Wx + b
+        u1 = _dot_product(x1, self.W1)
+        if self.bias1:
+            u1 += self.b1
+
+        u2 = _dot_product(self.W2, x2)
+        if self.bias2:
+            u2 += self.b2
+
+        # u = Activation(Wx + b)
+        u1 = self.activation(u1)
+        u2 = self.activation(u2)
+
+        atten = _dot_product(self.W, u1)
+        atten = _dot_product(u2, atten)
+
+        atten = K.exp(atten)
+
+        return atten
+
+    def compute_output_shape(self, input_shape):
+        if not isinstance(input_shape, list) or len(input_shape) != 2:
+            raise ValueError('A `Dot` layer should be called '
+                             'on a list of 2 inputs.')
+        shape1 = list(input_shape[0])
+        shape2 = list(input_shape[1])
+
+        if shape1[0] != shape2[0]:
+            raise ValueError("batch size must be same")
+
+        return shape1[0], shape1[1], shape2[1]
+
+    def get_config(self):
+        config = {
+            'activation': self.activation,
+            'model_size': self.model_size,
+            'W1_regularizer': regularizers.serialize(self.W1_regularizer),
+            'W2_regularizer': regularizers.serialize(self.W2_regularizer),
+            'b1_regularizer': regularizers.serialize(self.b1_regularizer),
+            'b2_regularizer': regularizers.serialize(self.b2_regularizer),
+            'W1_constraint': constraints.serialize(self.W1_constraint),
+            'W2_constraint': constraints.serialize(self.W2_constraint),
+            'b1_constraint': constraints.serialize(self.b1_constraint),
+            'b2_constraint': constraints.serialize(self.b2_constraint),
+            'bias1': self.bias1,
+            'bias2': self.bias2
+        }
+        base_config = super(CoAttentionWeight, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
 
