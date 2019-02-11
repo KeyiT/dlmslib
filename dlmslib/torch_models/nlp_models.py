@@ -16,7 +16,7 @@ class ThinStackHybridLSTM(nn.Module):
     REDUCE_SYMBOL = 2
 
     def __init__(self, embed_matrix, hidden_size, tracker_size, output_size, pad_token_index, alph_droput=0.5,
-                 trainable_embed=True,
+                 trainable_embed=False,
                  use_gpu=False, train_phase=True):
         super(ThinStackHybridLSTM, self).__init__()
 
@@ -232,6 +232,10 @@ class ThinStackHybridLSTM(nn.Module):
         model = self.cuda() if self.use_gpu else self
         flatten = lambda l: [item for sublist in l for item in sublist]
 
+        if self.train_phase:
+            model.train()
+        else:
+            model.eval()
         model.zero_grad()
         batch_token_pred, batch_pred = model(batch_tokens, batch_transitions)
 
@@ -248,8 +252,8 @@ class ThinStackHybridLSTM(nn.Module):
         ))
         # flatten
         # TODO: test
-        print((len(batch_token_pred_list), len(batch_token_pred_list[0])))
-        print((len(batch_token_labels), len(batch_token_labels[0])))
+        # print((len(batch_token_pred_list), len(batch_token_pred_list[0])))
+        # print((len(batch_token_labels), len(batch_token_labels[0])))
 
         batch_token_pred_list = flatten(batch_token_pred_list)
         batch_token_labels = flatten(batch_token_labels)
@@ -312,7 +316,7 @@ class ThinStackHybridLSTM(nn.Module):
         words = tree.get_leaf_texts()
 
         if word2index is not None:
-            words = list(map(lambda word: word2index[word], words))
+            words = list(map(lambda word: word2index[word] if word in word2index else pre_pad, words))
 
         transitions = tree.get_transitions(
             shift_symbol=ThinStackHybridLSTM.SHIFT_SYMBOL, reduce_symbol=ThinStackHybridLSTM.REDUCE_SYMBOL)
@@ -379,6 +383,8 @@ class ThinStackHybridLSTM(nn.Module):
 
         nn.init.xavier_uniform(self.W_out.state_dict()['weight'])
         nn.init.xavier_uniform(self.W_in.state_dict()['weight'])
+        self.reduce.init_weight()
+        self.tracker.init_weight()
 
 
 class Reduce(nn.Module):
