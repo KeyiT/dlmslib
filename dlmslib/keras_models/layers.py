@@ -109,24 +109,17 @@ class AttentionWeight(Layer):
         return dict(list(base_config.items()) + list(config.items()))
 
 
-class CoAttentionWeight(merge._Merge):
+class RemappedCoAttentionWeight(merge._Merge):
     """
-        This code is a modified version of cbaziotis implementation:  GithubGist cbaziotis/AttentionWithContext.py
-        Attention operation, with a context/query vector, for temporal data.
+        Unnormalized Co-Attention operation for temporal data.
         Supports Masking.
-        Follows the work of Yang et al. [https://www.cs.cmu.edu/~diyiy/docs/naacl16.pdf]
-        "Hierarchical Attention Networks for Document Classification"
-        by using a context vector to assist the attention
+        Follows the work of Ankur et al. [https://aclweb.org/anthology/D16-1244]
+        "A Decomposable Attention Model for Natural Language Inference"
         # Input shape
-            3D tensor with shape: `(samples, steps, features)`.
+            List of 2 3D tensor with shape: `(samples, steps1, features1)` and `(samples, steps2, features2)`.
         # Output shape
-            2D tensor with shape: `(samples, steps)`.
+            3D tensor with shape: `(samples, steps1, step2)`.
         :param kwargs:
-        Just put it on top of an RNN Layer (GRU/LSTM/SimpleRNN) with return_sequences=True.
-        The dimensions are inferred based on the output shape of the RNN.
-        Example:
-            model.add(LSTM(64, return_sequences=True))
-            model.add(AttentionWeight())
         """
 
     def __init__(self, model_size, activation='relu',
@@ -163,13 +156,13 @@ class CoAttentionWeight(merge._Merge):
         shape1 = list(input_shape[0])
         shape2 = list(input_shape[1])
 
-        self.W1 = self.add_weight((shape1, self.model_size),
+        self.W1 = self.add_weight((shape1[-1], self.model_size),
                                  initializer=self.init,
                                  name='{}_W1'.format(self.name),
                                  regularizer=self.W1_regularizer,
                                  constraint=self.W1_constraint)
 
-        self.W2 = self.add_weight((self.model_size, shape2),
+        self.W2 = self.add_weight((shape2[-1], self.model_size),
                                  initializer=self.init,
                                  name='{}_W2'.format(self.name),
                                  regularizer=self.W2_regularizer,
@@ -196,8 +189,8 @@ class CoAttentionWeight(merge._Merge):
                                      constraint=self.b2_constraint)
 
     def compute_mask(self, input, input_mask=None):
-        # do not pass the mask to the next layers
-        return None
+        # pass the mask to the next layers
+        return input_mask
 
     def _merge_function(self, inputs):
         if len(inputs) != 2:
@@ -211,17 +204,16 @@ class CoAttentionWeight(merge._Merge):
         if self.bias1:
             u1 += self.b1
 
-        u2 = _dot_product(self.W2, x2)
+        u2 = _dot_product(x2, self.W2)
         if self.bias2:
             u2 += self.b2
 
         # u = Activation(Wx + b)
         u1 = self.activation(u1)
-        u2 = self.activation(u2)
 
-        atten = _dot_product(self.W, u1)
-        atten = _dot_product(u2, atten)
-
+        # atten = exp(u1 W u2^T)
+        atten = _dot_product(u1, self.W)
+        atten = K.batch_dot(atten, u2, axes=[2, 2])
         atten = K.exp(atten)
 
         return atten
@@ -254,6 +246,141 @@ class CoAttentionWeight(merge._Merge):
             'bias2': self.bias2
         }
         base_config = super(CoAttentionWeight, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+
+class CoAttentionWeight(merge._Merge):
+    """
+        Unnormalized Co-Attention operation for temporal data.
+        Supports Masking.
+        Follows the work of Ankur et al. [https://aclweb.org/anthology/D16-1244]
+        "A Decomposable Attention Model for Natural Language Inference"
+        # Input shape
+            List of 2 3D tensor with shape: `(samples, steps1, features1)` and `(samples, steps2, features2)`.
+        # Output shape
+            3D tensor with shape: `(samples, steps1, step2)`.
+        :param kwargs:
+        """
+
+    def __init__(self,W_regularizer=None, W_constraint=None, **kwargs):
+
+        self.init = initializers.get('glorot_uniform')
+
+        self.W_regularizer = regularizers.get(W_regularizer)
+        self.W_constraint = constraints.get(W_constraint)
+
+        super(CoAttentionWeight, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        if not isinstance(input_shape, list) or len(input_shape) != 2:
+            raise ValueError('A `Coattention` layer should be called '
+                             'on a list of 2 inputs.')
+        shape1 = list(input_shape[0])
+        shape2 = list(input_shape[1])
+
+        if shape1[-1] != shape2[-1]:
+            raise ValueError("The last dimention of input tensors must be same. "
+                             "Otherwise use RemappedCoattentionWeight instead")
+
+        self.W = self.add_weight((self.model_size, shape1[-1]),
+                                 initializer=self.init,
+                                 name='{}_W'.format(self.name),
+                                 regularizer=self.W_regularizer,
+                                 constraint=self.W_constraint)
+
+        super(CoAttentionWeight, self).build(input_shape)
+
+
+    def compute_mask(self, input, input_mask=None):
+        # pass the mask to the next layers
+        return input_mask
+
+    def _merge_function(self, inputs):
+        if len(inputs) != 2:
+            raise ValueError('A `Subtract` layer should be called '
+                             'on exactly 2 inputs')
+
+        x1, x2 = inputs[0], inputs[1]
+
+        if x1.shape[-1] != x2.shape[-1]:
+            raise ValueError("The last dimention of input tensors must be same. "
+                             "Otherwise use RemappedCoattentionWeight instead")
+
+        # atten = exp(u1 W u2^T)
+        atten = _dot_product(x1, self.W)
+        atten = K.batch_dot(atten, x2, axes=[2, 2])
+        atten = K.exp(atten)
+
+        return atten
+
+    def compute_output_shape(self, input_shape):
+        if not isinstance(input_shape, list) or len(input_shape) != 2:
+            raise ValueError('A `Coattention` layer should be called '
+                             'on a list of 2 inputs.')
+        shape1 = list(input_shape[0])
+        shape2 = list(input_shape[1])
+
+        if shape1[0] != shape2[0]:
+            raise ValueError("batch size must be same")
+
+        return shape1[0], shape1[1], shape2[1]
+
+    def get_config(self):
+        config = {
+            'W_regularizer': regularizers.serialize(self.W_regularizer),
+            'W_constraint': constraints.serialize(self.W_constraint),
+        }
+        base_config = super(CoAttentionWeight, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+
+class FeatureNormalization(Layer):
+    """
+        Normalize feature along a specific axis.
+        Supports Masking.
+
+        # Input shape
+            A ND tensor with shape: `(samples, feature1 ... featuresN).
+        # Output shape
+            ND tensor with shape: `(samples, feature1 ... featuresN)`.
+        :param kwargs:
+        """
+
+    def __init__(self, axis=-1, **kwargs):
+
+        self.axis = axis
+        self.supports_masking = True
+        super(FeatureNormalization, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+
+        super(FeatureNormalization, self).build(input_shape)
+
+    def compute_mask(self, input, input_mask=None):
+        # don't pass the mask to the next layers
+        return None
+
+    def call(self, inputs, mask=None):
+        # apply mask after the exp. will be re-normalized next
+        if mask is not None:
+            # Cast the mask to floatX to avoid float64 upcasting in theano
+            a = K.cast(mask, K.floatx()) * inputs
+        else:
+            a = inputs
+
+        # in some cases especially in the early stages of training the sum may be almost zero
+        # and this results in NaN's. A workaround is to add a very small positive number ε to the sum.
+        # a /= K.cast(K.sum(a, axis=1, keepdims=True), K.floatx())
+        a /= K.cast(K.sum(a, axis=self.axis, keepdims=True) + K.epsilon(), K.floatx())
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+    def get_config(self):
+        config = {
+            'axis': self.axis
+        }
+        base_config = super(FeatureNormalization, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
 
