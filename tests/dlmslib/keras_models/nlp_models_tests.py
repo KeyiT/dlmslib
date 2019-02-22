@@ -95,3 +95,27 @@ class NLPModelTests(unittest.TestCase):
 
         self.assertIsNotNone(model)
 
+    def test_build_birnn_multifeature_coattention_model(self):
+        voca_dim = 10
+        time_steps = 10
+        output_dim = 2
+        model_dim = 6
+        mlp_dim = 30
+        num_feature_channels = 2
+        num_features = 3
+        feature_dim = 10
+        atten_dim = 5
+        item_embedding = np.ones(shape=(voca_dim, 10))
+        rnn_depth = 1
+        mlp_depth = 2
+        gpu = False
+
+        model = nlp_models.build_birnn_multifeature_coattention_model(
+            voca_dim, time_steps, num_feature_channels, num_features, feature_dim, output_dim, model_dim, atten_dim, mlp_dim,
+            item_embedding=item_embedding, rnn_depth=rnn_depth, mlp_depth=mlp_depth,
+            drop_out=0.5, rnn_drop_out=0., rnn_state_drop_out=0.,
+            trainable_embedding=False, gpu=gpu, return_customized_layers=False
+        )
+
+        self.assertIsNotNone(model)
+

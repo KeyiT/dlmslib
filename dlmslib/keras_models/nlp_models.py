@@ -442,7 +442,7 @@ def build_birnn_feature_coattention_cnn_model(
 
 
 def build_birnn_multifeature_coattention_model(
-        voca_dim, time_steps, num_feature_channels, num_features, feature_dim, output_dim, model_dim, mlp_dim,
+        voca_dim, time_steps, num_feature_channels, num_features, feature_dim, output_dim, model_dim, atten_dim, mlp_dim,
         item_embedding=None, rnn_depth=1, mlp_depth=1,
         drop_out=0.5, rnn_drop_out=0., rnn_state_drop_out=0.,
         trainable_embedding=False, gpu=False, return_customized_layers=False):
@@ -501,9 +501,11 @@ def build_birnn_multifeature_coattention_model(
 
     inputs1 = list()
     for fi in range(num_feature_channels):
-        inputs1.append(models.Input(shape=(num_features, feature_dim), dtype='float32', name='input' + str(fi)))
+        inputs1.append(models.Input(shape=(num_features, feature_dim), dtype='float32', name='input1' + str(fi)))
 
-    feature_map_layer = layers.Dense(feature_dim, name="feature_map_layer", activation="relu")
+    feature_map_layer = layers.TimeDistributed(
+        layers.Dense(model_dim, name="feature_map_layer", activation="sigmoid"), name="td_feature_map_layer"
+    )
     x2s = list(map(
         lambda input_: feature_map_layer(input_),
         inputs1
@@ -536,19 +538,16 @@ def build_birnn_multifeature_coattention_model(
 
     compare_layer1 = layers.TimeDistributed(layers.Dense(model_dim, activation="relu"), name="compare_layer1")
     compare_layer2 = layers.TimeDistributed(layers.Dense(model_dim, activation="relu"), name="compare_layer2")
-    average_pool1 = layers.GlobalAveragePooling1D(name="average_pool_layer1")
-    average_pool2 = layers.GlobalAveragePooling1D(name="average_pool_layer2")
-    concat_feature_layer = layers.Concatenate(axis=1, name="concat_feature_layer")
+    flatten_layer = layers.Flatten(name="flatten_layer")
 
-    xs = list(map(
-        lambda x2_: _coatten_compare_aggregate(
+    xs = list()
+    for x2_ in x2s:
+        xs += _coatten_compare_aggregate(
             coatten_layer, featnorm_layer1, featnorm_layer2,
             focus_layer1, focus_layer2, pair_layer1, pair_layer2,
             compare_layer1, compare_layer2,
-            average_pool1, average_pool2, concat_feature_layer,
-            x1, x2_),
-        x2s
-    ))
+            flatten_layer,
+            x1, x2_)
 
     x = layers.Concatenate(axis=1, name="concat_feature_layer")(xs)
 
@@ -559,7 +558,7 @@ def build_birnn_multifeature_coattention_model(
 
     outputs = layers.Dense(output_dim, activation="softmax", name="softmax_layer0")(x)
 
-    model = models.Model(inputs, outputs)
+    model = models.Model([inputs] + inputs1, outputs)
 
     if return_customized_layers:
         return model, {'CoAttentionWeight': clayers.CoAttentionWeight,
@@ -572,7 +571,7 @@ def _coatten_compare_aggregate(
         coatten_layer, featnorm_layer1, featnorm_layer2,
         focus_layer1, focus_layer2, pair_layer1, pair_layer2,
         compare_layer1, compare_layer2,
-        average_pool1, average_pool2, concat_feature_layer, x1, x2):
+        flatten_layer, x1, x2):
     # attention
     attens = coatten_layer([x1, x2])
 
@@ -590,11 +589,9 @@ def _coatten_compare_aggregate(
     x2 = compare_layer2(pair2)
 
     # Average Pool for x1
-    x2 = average_pool1(x2)
+    x1 = flatten_layer(x1)
 
     # Average Pool for x2
-    x2 = average_pool2(x2)
+    x2 = flatten_layer(x2)
 
-    x = concat_feature_layer([x1, x2])
-
-    return x
+    return [x1, x2]
