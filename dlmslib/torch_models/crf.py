@@ -16,7 +16,8 @@ class ChainCRF(nn.Module):
             num_labels: int
                 the number of labels of the crf layer
             bigram: bool
-                if apply bi-gram parameter.
+                If True then apply bi-gram parameter so that the transition distribution depends on the input,
+                otherwise, transition distribution is a trainable variable independent from the input.
         """
 
         super(ChainCRF, self).__init__()
@@ -52,7 +53,7 @@ class ChainCRF(nn.Module):
                     The first element is the decoding results in shape [batch, length].
                     The second element is the corresponding probability of the decoding results in shape [batch].
 
-                """
+        """
         return self.viterbi_decode(input_, mask=mask, kbest=1, leading_step_to_ignore=leading_step_to_ignore)
 
     def reset_parameters(self):
